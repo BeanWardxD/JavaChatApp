@@ -10,11 +10,20 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.Serializable;
 import java.lang.management.ManagementFactory;
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Paths;
 import java.security.Key;
+import java.security.KeyPairGenerator;
+import java.security.KeyPair;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.MessageDigest;
+import java.security.KeyFactory;
+import java.security.spec.X509EncodedKeySpec;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -28,8 +37,12 @@ import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
+import javax.crypto.KeyAgreement;
+
+
 
 import com.sun.management.OperatingSystemMXBean;
 import com.sun.net.httpserver.HttpExchange;
@@ -46,7 +59,7 @@ public final class Server {
 
    ExecutorService clientThreadPool = new ThreadPoolExecutor(
     0,
-    2,
+    10,
     0,
     TimeUnit.MILLISECONDS,
     workQueue,
@@ -179,14 +192,25 @@ public class Handler implements Runnable{
            this.receivedPacket = packetInput.readObject();
            
            this.userName = ((Packet)AESUtility.decryptObject ((byte[])receivedPacket)).getUsername();
-           
-           Server.clients.add(this);
-           Packet joinPacket = new Packet("SERVER", userName+" has connected");
-           sendMessage(joinPacket);
+           boolean userNameExists = false;
+           for (Handler client : Server.clients) {
+              if (client.userName.equals(userName)) {
+                  userNameExists = true;
+                  Packet alreadyConnected = new Packet("SEVER",userName+" has already conected");
+                  this.userName = "Duplicate user"; 
+                  sendMessage(alreadyConnected);
+                  
+                  Thread.sleep(1000);
+                  closer(socket, packetInput, packetOutput);
+                  break;
+              }
+            }
 
-           
-           
-        
+           if (!userNameExists){
+              Server.clients.add(this);
+              Packet joinPacket = new Packet("SERVER", userName+" has connected");
+              sendMessage(joinPacket);
+           }
 
         }
         catch(Exception e){
@@ -244,6 +268,7 @@ public class Handler implements Runnable{
     }
 
     private void extCloser(){
+        System.out.println("The external closer is being used");
         closer(socket, packetInput, packetOutput);
     }
 
@@ -306,11 +331,60 @@ class Packet implements Serializable{
         return message;
     }
 }
+class deffieHellman {
+    /* This class is not used
+    It was supposed to implement Deffie-Hellman key exchange to replace hardcodes keys
+    but was not completed. */
+    private PrivateKey privateKey;
+    private PublicKey publicKey;
+    private PublicKey clientKey;
+    private byte[] sharedSecret;
 
+    /*Many methods in this class can experience NoSuchAlgorithmExceptions
+     however the algorithms are hardcoded so there is no scenario where an exception occurs
+     hence they just throw it.
+     */
+
+    private deffieHellman () throws Exception{
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("DH");
+        keyGen.initialize(2048); // Key size
+        KeyPair keyPair = keyGen.generateKeyPair();
+        this.privateKey = keyPair.getPrivate(); 
+        this.publicKey = keyPair.getPublic();
+    }
+
+    //Preps the public key to be sent to the client
+    private byte[] encodePublicKey() {
+        return publicKey.getEncoded();
+    }
+
+    //Receives and handles the public key
+    public void setClientKey(byte[] clientKeyBytes) throws Exception {
+        KeyFactory keyFactory = KeyFactory.getInstance("DH");
+        X509EncodedKeySpec keySpec = new X509EncodedKeySpec(clientKeyBytes);
+        this.clientKey = keyFactory.generatePublic(keySpec);
+        generateSecretKey(); //Moves straight to generating the secret key no need to call seperatly
+    }
+
+    //Creates the secret key
+    private void generateSecretKey()throws Exception{
+        KeyAgreement keyAgreement = KeyAgreement.getInstance("DH");
+        keyAgreement.init(privateKey);
+        keyAgreement.doPhase(clientKey, true);
+        this.sharedSecret = keyAgreement.generateSecret();
+    }
+
+    //Preps key for AES
+    private byte[] getAESKey()throws Exception{
+         MessageDigest hashAlgo = MessageDigest.getInstance("SHA-256");
+         return hashAlgo.digest(sharedSecret);
+    }
+
+}
 class AESUtility {
     private static final String ALGORITHM = "AES";
-    private static final String TRANSFORMATION = "AES/ECB/PKCS5Padding";
-    private static final byte[] KEY = "CryptKey98473817".getBytes(); 
+    private static final String TRANSFORMATION = "AES/GCM/PKCS5Padding";
+    private static final byte[] KEY = "CryptKey98473817".getBytes(); //Dont hardcode
 
     public static byte[] encryptObject(Serializable object) throws Exception {
         //Serialize the object
