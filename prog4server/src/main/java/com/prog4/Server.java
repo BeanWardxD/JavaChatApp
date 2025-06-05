@@ -10,20 +10,18 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.Serializable;
 import java.lang.management.ManagementFactory;
-import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Paths;
 import java.security.Key;
-import java.security.KeyPairGenerator;
+import java.security.KeyFactory;
 import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
-import java.security.MessageDigest;
-import java.security.KeyFactory;
 import java.security.spec.X509EncodedKeySpec;
-import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -37,12 +35,9 @@ import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-
 import javax.crypto.Cipher;
-import javax.crypto.spec.SecretKeySpec;
 import javax.crypto.KeyAgreement;
-
-
+import javax.crypto.spec.SecretKeySpec;
 
 import com.sun.management.OperatingSystemMXBean;
 import com.sun.net.httpserver.HttpExchange;
@@ -80,11 +75,12 @@ public final class Server {
        WebHandler web = new WebHandler(webServerSocket);
        Thread webThread = new Thread(web);
        webThread.start();
-       Server.chatServer(); //Nothing goes beyond this because it constantly waits for clients
+       Server.chatServer(); //Nothing can go beyond this because it constantly waits for clients and will never end
        
     }
     catch(Exception e){
-        e.printStackTrace();
+        System.out.println("Error starting server");
+        //e.printStackTrace();
     }
 
    } 
@@ -97,7 +93,8 @@ public final class Server {
         }
 
         catch(Exception e){
-              e.printStackTrace();
+              System.out.println("Error writing to log file");
+              //e.printStackTrace();
         }
 
    }
@@ -129,7 +126,8 @@ public final class Server {
            
         }
         catch(Exception e){
-            e.printStackTrace();
+            System.out.println("Error creating log file");
+            //e.printStackTrace();
         }
            
         
@@ -138,19 +136,20 @@ public final class Server {
         
         try{
           Packet noSpace = new Packet("SERVER", "No space in server");
-          while(!chatServerSocket.isClosed()){ //Loops as long as the socket is open
+          while(!chatServerSocket.isClosed()){ 
 
-            Socket socket = chatServerSocket.accept(); //Program waits here until a client connects and creates a socket object
+            Socket socket = chatServerSocket.accept(); //Program waits here until a client connects and creates a socket object so the program can be constantly waiting for a new client
             
-            Handler client = new Handler(socket, logPath); //Creates new client object using the socket
+            Handler client = new Handler(socket, logPath); 
 
+            /*Normally the client would be added to the thread pool but if the exception throws it means the thread pool is full
+            So it creates a new thread to send the message to the client and close it */
             try {
                clientThreadPool.submit(client);
             } catch (RejectedExecutionException e) {
-                // Handle full pool case
                 Thread tempThread = new Thread(() -> {
                    client.sendMessage(noSpace);
-                   client.extCloser();  // Close after sending
+                   client.extCloser();  
                 });
                 tempThread.start();
                 
@@ -163,7 +162,8 @@ public final class Server {
                 chatServerSocket.close(); //Closes the server if its open and something went wrong
              }
          } catch (IOException e2) {
-            e2.printStackTrace();  //Throws error if server was not open when failure occured
+                System.out.println("Error dealing with duplicate users connection");
+                //e2.printStackTrace();  //For when the server was not open when failure occured
          }
         }
    }
@@ -179,6 +179,10 @@ public class Handler implements Runnable{
     private ObjectOutputStream packetOutput;
     private Object receivedPacket;
     private String userName;
+    private deffieHellman deffieHellman; 
+    private byte[] key; 
+    private boolean isClosed =false;
+  
 
     
     
@@ -189,18 +193,33 @@ public class Handler implements Runnable{
            this.packetOutput = new ObjectOutputStream(socket.getOutputStream());
            this.packetOutput.flush(); 
            this.packetInput = new ObjectInputStream(socket.getInputStream());
-           this.receivedPacket = packetInput.readObject();
+
+           //This block here is responsible for the key exchange 
+           this.deffieHellman = new deffieHellman(); 
+           this.packetOutput.writeObject(deffieHellman.encodePublicKey()); 
+           this.packetOutput.flush();
+           byte[] clientKeyBytes = (byte[]) packetInput.readObject(); 
+           deffieHellman.setClientKey(clientKeyBytes);
+           this.key = deffieHellman.getAESKey(); 
            
-           this.userName = ((Packet)AESUtility.decryptObject ((byte[])receivedPacket)).getUsername();
+
+           
+           this.receivedPacket = packetInput.readObject();
+           this.userName = ((Packet)AESUtility.decryptObject ((byte[])receivedPacket, key)).getUsername();
+           /* If a client with the same username already exists it must be a duplicate instance (because in the db usernames are unique) 
+            This means the server has to boot off the duplicate to stop it from wasting space in the threadpool */
+           
            boolean userNameExists = false;
            for (Handler client : Server.clients) {
               if (client.userName.equals(userName)) {
+                  //Changes the name to duplicate user so people arent confused when they see the same name
                   userNameExists = true;
                   Packet alreadyConnected = new Packet("SEVER",userName+" has already conected");
                   this.userName = "Duplicate user"; 
                   sendMessage(alreadyConnected);
                   
                   Thread.sleep(1000);
+                  System.out.println("User exists block");
                   closer(socket, packetInput, packetOutput);
                   break;
               }
@@ -214,6 +233,8 @@ public class Handler implements Runnable{
 
         }
         catch(Exception e){
+            System.out.println("Error in handler constructor");
+            //e.printStackTrace();
             closer(socket, packetInput, packetOutput);
         }
         
@@ -222,34 +243,47 @@ public class Handler implements Runnable{
     public String getClientName(){
         return userName;
     }
-    
+
+    public byte[] getKey(){
+        return key;
+    }
+    /*The send message method just iterates through a list of clients and sends the packet
+     to each client except the one that sent it on top of that it logs the message */
     private void sendMessage (Packet packet){
         csvWriter(logPath, packet.getUsername(), packet.getMessage());
         System.out.println(packet.getUsername()+ ": " + packet.getMessage());
-        for (Handler client : Server.clients){   //Iterates through each connected client to send them the message
+        for (Handler client : Server.clients){   
             try {
-                if(!client.userName.equals(this.userName)){ //Runs if the username isnt the same (only sends to other people)
-                   byte[] encryptedPacket = AESUtility.encryptObject(packet);
+                if(!client.userName.equals(this.userName)){ 
+                   byte[] encryptedPacket = AESUtility.encryptObject(packet, client.getKey());
                    client.packetOutput.writeObject(encryptedPacket);
                    client.packetOutput.flush();
                    
                 }
             } 
             catch (Exception e) {
-               e.printStackTrace();
+               System.out.println("Error sending message");
+               //e.printStackTrace();
                closer(socket, packetInput, packetOutput);
             }
         }
     }
 
     private void dropClient(){
+         //It is in an if statement so there arent duplicate leaving messages (Was a big problem when I was trying to stop duplicate users joining)
+         if(!isClosed){
            Packet serverMessage = new Packet("SERVER", userName+" has left the chat");
            sendMessage(serverMessage);
            clients.remove(this);
+           this.isClosed = true;
+         }
     }
 
     private void closer(Socket socket, ObjectInputStream packetInput, ObjectOutputStream packetOutput){
-         try{
+        System.out.println("Closing resources for " + userName);
+         //All this does is close the resources
+        try{
+             
              if(packetOutput != null){
                  packetOutput.close();
              }
@@ -260,9 +294,11 @@ public class Handler implements Runnable{
                  socket.close();
              }
              dropClient();
+             
          }
          catch(IOException e){
-             e.printStackTrace();
+             //e.printStackTrace();
+             System.out.println("Error closing resources");
          }
 
     }
@@ -278,17 +314,20 @@ public class Handler implements Runnable{
 
     @Override
     public void run(){
+      //Waits for messages to come through because readObject is a blocker then it loops as long as the socket is connected
       try{
         while(socket.isConnected()){
             Object received = packetInput.readObject();
             if(received instanceof byte[]){
-                Packet packet = (Packet) AESUtility.decryptObject ((byte[])received);
+                Packet packet = (Packet) AESUtility.decryptObject ((byte[])received, key);
                 sendMessage(packet);
             }
            
         }
       }
       catch(Exception e){
+        //e.printStackTrace();
+        System.out.println("Error in receiver");
         closer(socket, packetInput, packetOutput);
       }
     }
@@ -305,8 +344,7 @@ class Packet implements Serializable{
     private final String username;
     private final String time;
     private final Date date;
-
-    //Constructor 
+    //Was going to include a date but it was not used in the end kept incase I develop further after I hand it in
     public Packet(String username, String message){
         this.date = new Date(); 
         this.time = String.format("%tT", date); 
@@ -314,7 +352,6 @@ class Packet implements Serializable{
         this.message = message;
       }
 
-    //Getters (No setters to prevent changes before object is sent)
     public Date getDate() {
         return date;
     }
@@ -332,20 +369,17 @@ class Packet implements Serializable{
     }
 }
 class deffieHellman {
-    /* This class is not used
-    It was supposed to implement Deffie-Hellman key exchange to replace hardcodes keys
-    but was not completed. */
     private PrivateKey privateKey;
     private PublicKey publicKey;
     private PublicKey clientKey;
     private byte[] sharedSecret;
 
     /*Many methods in this class can experience NoSuchAlgorithmExceptions
-     however the algorithms are hardcoded so there is no scenario where an exception occurs
-     hence they just throw it.
-     */
+     however the algorithms are hardcoded so there is no scenario where that exception occurs
+     hence they just throw it.*/
+     
 
-    private deffieHellman () throws Exception{
+    public deffieHellman () throws Exception{
         KeyPairGenerator keyGen = KeyPairGenerator.getInstance("DH");
         keyGen.initialize(2048); // Key size
         KeyPair keyPair = keyGen.generateKeyPair();
@@ -354,7 +388,7 @@ class deffieHellman {
     }
 
     //Preps the public key to be sent to the client
-    private byte[] encodePublicKey() {
+    public byte[] encodePublicKey() {
         return publicKey.getEncoded();
     }
 
@@ -374,42 +408,46 @@ class deffieHellman {
         this.sharedSecret = keyAgreement.generateSecret();
     }
 
-    //Preps key for AES
-    private byte[] getAESKey()throws Exception{
+    //Preps key for use in AES
+    public byte[] getAESKey()throws Exception{
          MessageDigest hashAlgo = MessageDigest.getInstance("SHA-256");
-         return hashAlgo.digest(sharedSecret);
+         byte[] aesKey = hashAlgo.digest(sharedSecret);
+         //System.out.println("AES Key (Hex): " + bytesToHex(aesKey));
+         System.out.println("AES Key Length: " + aesKey.length + " bytes");
+         return aesKey;
     }
 
 }
 class AESUtility {
     private static final String ALGORITHM = "AES";
-    private static final String TRANSFORMATION = "AES/GCM/PKCS5Padding";
-    private static final byte[] KEY = "CryptKey98473817".getBytes(); //Dont hardcode
+    private static final String TRANSFORMATION = "AES/ECB/PKCS5Padding";
+    //private static final byte[] KEY = "CryptKey98473817".getBytes(); //Dont hardcode
+    
 
-    public static byte[] encryptObject(Serializable object) throws Exception {
-        //Serialize the object
+    public static byte[] encryptObject(Serializable object, byte[] key) throws Exception {
+        //Turns the object into bytes
         ByteArrayOutputStream byteOutput = new ByteArrayOutputStream();
         ObjectOutputStream objectOutput = new ObjectOutputStream(byteOutput);
         objectOutput.writeObject(object);
         objectOutput.flush();
-        byte[] serialized = byteOutput.toByteArray();
+        byte[] byteObject = byteOutput.toByteArray();
         
         //Encrypt
-        Key key = new SecretKeySpec(KEY, ALGORITHM);
+        Key secretKey = new SecretKeySpec(key, ALGORITHM);
         Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-        cipher.init(Cipher.ENCRYPT_MODE, key);
-        return cipher.doFinal(serialized);
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+        return cipher.doFinal(byteObject);
     }
     
-    public static Object decryptObject(byte[] encryptedBytes) throws Exception {
+    public static Object decryptObject(byte[] encryptedBytes,byte[] key) throws Exception {
         //Decrypt
-        Key key = new SecretKeySpec(KEY, ALGORITHM);
+        Key secretKey = new SecretKeySpec(key, ALGORITHM);
         Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-        cipher.init(Cipher.DECRYPT_MODE, key);
-        byte[] serialized = cipher.doFinal(encryptedBytes);
+        cipher.init(Cipher.DECRYPT_MODE, secretKey);
+        byte[] byteObject = cipher.doFinal(encryptedBytes);
         
-        //Deserialize
-        ByteArrayInputStream byteInput = new ByteArrayInputStream(serialized);
+        //Puts the bytes back into an object
+        ByteArrayInputStream byteInput = new ByteArrayInputStream(byteObject);
         ObjectInputStream objectInput = new ObjectInputStream(byteInput);
         return objectInput.readObject();
     }
@@ -436,7 +474,8 @@ class WebHandler implements Runnable{
     public void run(){
         ExecutorService threadPool = Executors.newCachedThreadPool();
         Thread.setDefaultUncaughtExceptionHandler((Thread t, Throwable e) -> {
-            e.printStackTrace();
+            //e.printStackTrace();
+            System.out.println("Exception in thread");
         });
         int serverStartTime = (int)System.currentTimeMillis()/1000;
         try{
@@ -495,7 +534,8 @@ class WebHandler implements Runnable{
            System.out.println("Web Server started on port " + port);
         }
         catch(IOException e){
-            e.printStackTrace();
+            System.out.println("Error with web server");
+            //e.printStackTrace();
         }
     }
 }

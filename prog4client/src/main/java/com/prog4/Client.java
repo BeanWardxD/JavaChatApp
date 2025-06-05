@@ -1,5 +1,9 @@
 package com.prog4;
 
+import java.awt.BorderLayout;
+import java.awt.GridLayout;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -16,101 +20,335 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Date;
-import java.util.Scanner;
+
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
-
 import org.mindrot.jbcrypt.BCrypt;
+import javax.crypto.KeyAgreement;
+
+import java.security.Key;
+import java.security.KeyPairGenerator;
+import java.security.KeyPair;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.MessageDigest;
+import java.security.KeyFactory;
+import java.security.spec.X509EncodedKeySpec;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JPasswordField;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
+
 
 
 
 class DatabaseConnection {
     private static final String DB_URL = "jdbc:mysql://ysjcs.net:3306/placeholder_motogp"; //Uses motogp because I dont have perms to make a new db
     private static final String DB_USER = "placeholder";
-    private static final String DB_PASSWORD = "placeholder";
+    private static final String DB_PASSWORD = "";
     
     public static Connection getConnection() throws SQLException {
         return DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
     }
 }
 
-class Client{
 
-    private static Socket socket;
 
-    public static void main(String[] args){
+class chatGUI {
+    private JFrame frame;
+    private JTextField usernameField;
+    private JTextField IPField;
+    private JTextField portField;
+    private JPasswordField passwordField;
+    public  static JTextArea chatArea;
+    private JTextField messageField;
+    private JButton sendButton;
+    private JButton leaveButton;
+    private JButton connectButton;
+    private JButton logOutButton;
+    private JPanel loginPanel;
+    private JPanel serverPanel;
+    private JPanel chatPanel;
+    private ObjectOutputStream outputObjectStream;
+    private ObjectInputStream inputObjectStream;
+    private String username;
+    private Socket socket;
+    private Coms messageThread;
+    private byte[] key;
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> new chatGUI().initialize());
+    }
+
+    private void initialize() {
+        frame = new JFrame("Login");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(400, 200);
+        frame.setVisible(true);
+        createLoginGUI();
+    }
+
+    private void createLoginGUI() {
         
-        
-        //Initializes variables
-        String username;
-        String userpass;
-        boolean auth;
-        
 
-        //Initializes scanner object for inputs
-        Scanner scanner = new Scanner(System.in);
-        auth = false;
-        username ="Null";
-        while (auth == false){
-             System.out.println("Please enter your username");
-             username = scanner.nextLine();
-             System.out.println("Please enter your password");
-             userpass = scanner.nextLine(); 
-             auth = userDAO.authenticate(username, userpass);
-        }
+        loginPanel = new JPanel(new GridLayout(3, 2, 5, 5));
+        loginPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        try{
-            Setup setup = new Setup(scanner);
-            socket = setup.getSocket();
-            ObjectInputStream inputObjectStream = new ObjectInputStream(socket.getInputStream());
-            ObjectOutputStream outputObjectStream = new ObjectOutputStream(socket.getOutputStream());
-            outputObjectStream.flush(); 
+        loginPanel.add(new JLabel("Username:"));
+        usernameField = new JTextField();
+        loginPanel.add(usernameField);
 
-            Packet initPacket = new Packet(username, "User has joined the chat.");
-    
-            try {
-                    //Encrypt the packet before sending
-                   byte[] encryptedPacket = AESUtility.encryptObject(initPacket);
-                   outputObjectStream.writeObject(encryptedPacket);
-                   outputObjectStream.flush();
-            } catch (Exception e) {
-                   e.printStackTrace();
+        loginPanel.add(new JLabel("Password:"));
+        passwordField = new JPasswordField();
+        loginPanel.add(passwordField);
+
+        JButton loginButton = new JButton("Login");
+        loginButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                attemptLogin();
             }
+        });
+        loginPanel.add(loginButton);
 
-            Coms messageThread = new Coms(socket, inputObjectStream, outputObjectStream);
-            
-            
-            new Thread(messageThread).start();
-
-            while(true){
-                
-                String message = scanner.nextLine(); 
-              
-                Packet newPacket = new Packet(username, message);
-                try {
-                   //Encrypt the packet before sending
-                   byte[] encryptedPacket = AESUtility.encryptObject(newPacket);
-                   outputObjectStream.writeObject(encryptedPacket);
-                   outputObjectStream.flush();
-                } catch (Exception e) {
-                   System.out.println("No conncetion to the server");
-                   break;
-               }
-             }
-        }
-        catch(SocketException s){
-          s.printStackTrace();
-        }
-        catch(IOException io){
-           io.printStackTrace();
-        }
+        if (serverPanel != null) {
+           frame.remove(serverPanel);
+           System.out.println("Removed server panel");
+        } 
+        frame.setTitle("Login");
+        frame.add(loginPanel);
+        frame.revalidate();
+        frame.repaint();
         
     }
 
+    private void attemptLogin() {
+        username = usernameField.getText();
+        String userpass = new String(passwordField.getPassword());
+        
+        boolean auth = userDAO.authenticate(username, userpass);
+        
+        if (auth) {
+            frame.getContentPane().remove(loginPanel);
+            System.out.println("Logged in");
+            createSocketGUI();
+        } else {
+            JOptionPane.showMessageDialog(frame, "Invalid username or password", "Login Failed", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void createSocketGUI(){
+        
+
+        serverPanel= new JPanel(new GridLayout(3, 2, 5, 5));
+        serverPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+        serverPanel.add(new JLabel("IP:"));
+        IPField= new JTextField("localhost");
+        serverPanel.add(IPField);
+
+        serverPanel.add(new JLabel("Port:"));
+        portField = new JTextField("7777");
+        serverPanel.add(portField);
+        
+
+        connectButton = new JButton("Connect");
+        connectButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                getSocket();
+            }
+        });
+        serverPanel.add(connectButton);
+
+
+        logOutButton = new JButton("Log Out");
+        logOutButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                createLoginGUI();
+            }
+        });
+        serverPanel.add(logOutButton);
+        
+
+        if (loginPanel != null) {
+           frame.remove(loginPanel);
+           System.out.println("Removed login panel");
+        } 
+
+        if (chatPanel != null) {
+            frame.remove(chatPanel);
+            System.out.println("Removed chat panel");
+        }
+        frame.setTitle("Join Server");
+        frame.add(serverPanel);
+        frame.revalidate();
+        frame.repaint();
+       
+
+    }
+    private void getSocket(){
+        try{
+           int port = Integer.parseInt(portField.getText().trim()); 
+           System.out.println("Port: " + port);
+           if(port > 1024 && port < 49151 && port != 8080){
+              String ip = IPField.getText();
+              System.out.println("Port: " + ip);
+              try {
+                  socket = new Socket(ip,port);
+                  initializeChat(socket);
+              } catch (Exception e) {
+                System.out.println("This socket cannot connect");
+                JOptionPane.showMessageDialog(frame, "Cannot connect to this socket. Check you have the right inputs and the target server is running.", "Cannot connect", JOptionPane.ERROR_MESSAGE);
+              }
+           }
+           else{
+              System.out.println("This is not a valid port");
+              JOptionPane.showMessageDialog(frame, "Use ports between 1024 and 49151 excluding 8080.", "Invald port", JOptionPane.ERROR_MESSAGE);
+           }
+        }
+        catch(NumberFormatException e){
+            System.out.println("Port is not a number");
+            JOptionPane.showMessageDialog(frame, "Port must be a number between 1024 and 49151.", "Invalid port", JOptionPane.ERROR_MESSAGE);
+        }
+        catch(Exception e){
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(frame, "Error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
 
     
+    private void initializeChat(Socket socket) {
+        try {
+            inputObjectStream = new ObjectInputStream(socket.getInputStream());
+            outputObjectStream = new ObjectOutputStream(socket.getOutputStream());
+            outputObjectStream.flush();
+
+            deffieHellman deffieHellman = new deffieHellman();
+            outputObjectStream.writeObject(deffieHellman.encodePublicKey());
+            outputObjectStream.flush();
+            byte[] serverKeyBytes = (byte[]) inputObjectStream.readObject();
+            deffieHellman.setServerKey(serverKeyBytes);
+            key = deffieHellman.getAESKey();
+            System.out.println("AES Key: " + (key != null ? "Valid "+key : "NULL")); 
+            createChatGUI();
+
+            //The server wont read the message it just gets the username so I handled the join message on the server
+            Packet initPacket = new Packet(username, "User has joined the chat.");
+            try {
+                byte[] encryptedPacket = AESUtility.encryptObject(initPacket, key);
+                outputObjectStream.writeObject(encryptedPacket);
+                outputObjectStream.flush();
+            } catch (IOException e) {
+                e.printStackTrace();
+                JOptionPane.showMessageDialog(frame, "IOerror: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+            catch(Exception e){
+                e.printStackTrace();
+                JOptionPane.showMessageDialog(frame, "Encrpytion Error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+
+            // Start message thread
+            messageThread = new Coms(socket, inputObjectStream, outputObjectStream,key);
+            new Thread(messageThread).start();
+
+        } catch (SocketException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(frame, "Connection error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        } catch (IOException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(frame, "IO error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+        catch (ClassNotFoundException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(frame, "Class not found: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Exception e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(frame, "Error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void createChatGUI() {
+        chatPanel = new JPanel(new BorderLayout());
+        
+        chatArea = new JTextArea();
+        chatArea.setEditable(false);
+        JScrollPane scrollPane = new JScrollPane(chatArea);
+        chatArea.setEditable(false);
+        chatPanel.add(scrollPane, BorderLayout.CENTER);
+        
+        JPanel bottomPanel = new JPanel(new BorderLayout());
+        messageField = new JTextField();
+        bottomPanel.add(messageField, BorderLayout.CENTER);
+        
+        sendButton = new JButton("Send");
+        sendButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                sendMessage();
+            }
+        });
+
+        //Sends when you press enter
+        messageField.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                sendMessage();
+            }
+        });
+
+        leaveButton = new JButton("Leave");
+        leaveButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                messageThread.extCloser(); 
+                
+                createSocketGUI();
+            }
+        });
+
+        bottomPanel.add(sendButton, BorderLayout.EAST);
+        
+        chatPanel.add(bottomPanel, BorderLayout.SOUTH);
+
+        bottomPanel.add(leaveButton, BorderLayout.WEST);
+        
+        frame.setTitle("Chat - " + username);
+        frame.remove(serverPanel);
+        frame.add(chatPanel);
+        frame.revalidate();
+        frame.repaint();
+        
+        
+    }
+
+    private void sendMessage() {
+        String message = messageField.getText();
+        if (!message.trim().isEmpty()) {
+            Packet newPacket = new Packet(username, message);
+            try {
+                byte[] encryptedPacket = AESUtility.encryptObject(newPacket, key);
+                outputObjectStream.writeObject(encryptedPacket);
+                outputObjectStream.flush();
+                messageField.setText("");
+                chatArea.append(username+": "+message+"\n");
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(frame, "No connection to the server", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
 }
+
 
 class userDAO{
 
@@ -125,9 +363,9 @@ class userDAO{
             
              if (rs.next()) {
                 String storedPassword = rs.getString("password");
+                boolean isHashed = BCrypt.checkpw(password, storedPassword);
                 try{ 
-                  if(BCrypt.checkpw(password, storedPassword)){
-                    
+                  if(isHashed){
                     String checkBan = "SELECT isBanned,unban_timestamp FROM users WHERE username = ?";
                     PreparedStatement banStmt = conn.prepareStatement(checkBan);
                     banStmt.setString(1, username);
@@ -177,50 +415,18 @@ class userDAO{
 
 }
 
-class Setup{
-    private final Scanner scanner;
-    private final Socket socket;
-
-    public Setup(Scanner scanner){
-        this.scanner = scanner;
-        this.socket = socketer();      
-    }
-
-
-    private Socket socketer(){
-        while (true){
-           System.out.println("Port: ");
-           int port = Integer.parseInt(scanner.nextLine().trim()); 
-           if(port > 1024 && port < 49151 && port != 8080){
-              System.out.println("IP: ");
-              String ip = scanner.nextLine();
-              try {
-                  Socket trySocket = new Socket(ip,port);
-                  return trySocket;
-              } catch (Exception e) {
-                System.out.println("This socket cannot connect");
-              }
-           }
-           else{
-              System.out.println("This is not a valid port");
-           }
-        }
-    }
-
-    public Socket getSocket(){
-        return socket;
-    }
-}
 
 class Coms implements Runnable{
     Socket socket;
     ObjectInputStream input;
     ObjectOutputStream output;
+    byte[] key;
 
-    public Coms(Socket socket,ObjectInputStream input,ObjectOutputStream output){
+    public Coms(Socket socket,ObjectInputStream input,ObjectOutputStream output, byte[] key) {
         this.socket = socket;
         this.input = input;
         this.output = output;
+        this.key = key;
 
     }
 
@@ -252,8 +458,9 @@ class Coms implements Runnable{
           while(socket.isConnected()){
              Object receivedPacket = input.readObject();
               if (receivedPacket instanceof byte[]) {
-                  Packet packet = (Packet) AESUtility.decryptObject ((byte[])receivedPacket);
+                  Packet packet = (Packet) AESUtility.decryptObject ((byte[])receivedPacket, key);
                   System.out.println(packet.getUsername() + ": " + packet.getMessage()); 
+                  chatGUI.chatArea.append(packet.getUsername() + ": " + packet.getMessage()+ "\n");
               }
           }
                         
@@ -302,37 +509,86 @@ class Packet implements Serializable{
 class AESUtility {
     private static final String ALGORITHM = "AES";
     private static final String TRANSFORMATION = "AES/ECB/PKCS5Padding";
-    private static final byte[] KEY = "CryptKey98473817".getBytes(); 
+    //private static final byte[] KEY = "CryptKey98473817".getBytes(); //Dont hardcode
     
 
-    public static byte[] encryptObject(Serializable object) throws Exception {
-        //Serialize the object
+    public static byte[] encryptObject(Serializable object, byte[] key) throws Exception {
+        //Turns the object into bytes
         ByteArrayOutputStream byteOutput = new ByteArrayOutputStream();
         ObjectOutputStream objectOutput = new ObjectOutputStream(byteOutput);
         objectOutput.writeObject(object);
         objectOutput.flush();
-        byte[] serialized = byteOutput.toByteArray();
+        byte[] byteObject = byteOutput.toByteArray();
         
         //Encrypt
-        Key key = new SecretKeySpec(KEY, ALGORITHM);
+        Key secretKey = new SecretKeySpec(key, ALGORITHM);
         Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-        cipher.init(Cipher.ENCRYPT_MODE, key);
-        return cipher.doFinal(serialized);
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+        return cipher.doFinal(byteObject);
     }
     
-    public static Object decryptObject(byte[] encryptedBytes) throws Exception {
+    public static Object decryptObject(byte[] encryptedBytes,byte[] key) throws Exception {
         //Decrypt
-        Key key = new SecretKeySpec(KEY, ALGORITHM);
+        Key secretKey = new SecretKeySpec(key, ALGORITHM);
         Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-        cipher.init(Cipher.DECRYPT_MODE, key);
-        byte[] serialized = cipher.doFinal(encryptedBytes);
+        cipher.init(Cipher.DECRYPT_MODE, secretKey);
+        byte[] byteObject = cipher.doFinal(encryptedBytes);
         
-        //Deserialize
-        ByteArrayInputStream byteInput = new ByteArrayInputStream(serialized);
+        //Puts the bytes back into an object
+        ByteArrayInputStream byteInput = new ByteArrayInputStream(byteObject);
         ObjectInputStream objectInput = new ObjectInputStream(byteInput);
         return objectInput.readObject();
     }
+}
 
-   
+
+class deffieHellman {
+    /* This class is not used
+    It was supposed to implement Deffie-Hellman key exchange to replace hardcodes keys
+    but was not completed. */
+    private PrivateKey privateKey;
+    private PublicKey publicKey;
+    private PublicKey serverKey;
+    private byte[] sharedSecret;
+
+    /*Many methods in this class can experience NoSuchAlgorithmExceptions
+     however the algorithms are hardcoded so there is no scenario where an exception occurs
+     hence they just throw it.
+     */
+
+    public deffieHellman () throws Exception{
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("DH");
+        keyGen.initialize(2048); // Key size
+        KeyPair keyPair = keyGen.generateKeyPair();
+        this.privateKey = keyPair.getPrivate(); 
+        this.publicKey = keyPair.getPublic();
+    }
+
+    //Preps the public key to be sent to the server
+    public byte[] encodePublicKey() {
+        return publicKey.getEncoded();
+    }
+
+    //Receives and handles the public key
+    public void setServerKey(byte[] serverKeyBytes) throws Exception {
+        KeyFactory keyFactory = KeyFactory.getInstance("DH");
+        X509EncodedKeySpec keySpec = new X509EncodedKeySpec(serverKeyBytes);
+        this.serverKey = keyFactory.generatePublic(keySpec);
+        generateSecretKey(); //Moves straight to generating the secret key no need to call seperatly
+    }
+
+    //Creates the secret key
+    private void generateSecretKey()throws Exception{
+        KeyAgreement keyAgreement = KeyAgreement.getInstance("DH");
+        keyAgreement.init(privateKey);
+        keyAgreement.doPhase(serverKey, true);
+        this.sharedSecret = keyAgreement.generateSecret();
+    }
+
+    //Preps key for AES
+    public byte[] getAESKey()throws Exception{
+         MessageDigest hashAlgo = MessageDigest.getInstance("SHA-256");
+         return hashAlgo.digest(sharedSecret);
+    }
 
 }
