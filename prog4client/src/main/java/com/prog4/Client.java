@@ -1,9 +1,5 @@
 package com.prog4;
 
-import java.awt.BorderLayout;
-import java.awt.GridLayout;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -27,7 +23,6 @@ import javax.crypto.spec.SecretKeySpec;
 import org.mindrot.jbcrypt.BCrypt;
 import javax.crypto.KeyAgreement;
 
-import java.security.Key;
 import java.security.KeyPairGenerator;
 import java.security.KeyPair;
 import java.security.PrivateKey;
@@ -48,12 +43,18 @@ import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 
+import java.awt.BorderLayout;
+import java.awt.GridLayout;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.CardLayout;
+
 
 
 
 class DatabaseConnection {
-    private static final String DB_URL = "jdbc:mysql://ysjcs.net:3306/placeholder_motogp"; //Uses motogp because I dont have perms to make a new db
-    private static final String DB_USER = "placeholder";
+    private static final String DB_URL = "jdbc:mysql://ysjcs.net:3306/_motogp"; //Uses motogp because I dont have perms to make a new db
+    private static final String DB_USER = "";
     private static final String DB_PASSWORD = "";
     
     public static Connection getConnection() throws SQLException {
@@ -71,13 +72,9 @@ class chatGUI {
     private JPasswordField passwordField;
     public  static JTextArea chatArea;
     private JTextField messageField;
-    private JButton sendButton;
-    private JButton leaveButton;
-    private JButton connectButton;
-    private JButton logOutButton;
     private JPanel loginPanel;
-    private JPanel serverPanel;
-    private JPanel chatPanel;
+    private JPanel mainPanel;
+    private CardLayout cardLayout;
     private ObjectOutputStream outputObjectStream;
     private ObjectInputStream inputObjectStream;
     private String username;
@@ -93,6 +90,9 @@ class chatGUI {
         frame = new JFrame("Login");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setSize(400, 200);
+        cardLayout = new CardLayout();
+        mainPanel = new JPanel(cardLayout);
+        frame.add(mainPanel);
         frame.setVisible(true);
         createLoginGUI();
     }
@@ -112,22 +112,14 @@ class chatGUI {
         loginPanel.add(passwordField);
 
         JButton loginButton = new JButton("Login");
-        loginButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                attemptLogin();
-            }
-        });
+        loginButton.addActionListener(e -> attemptLogin());
+          
         loginPanel.add(loginButton);
 
-        if (serverPanel != null) {
-           frame.remove(serverPanel);
-           System.out.println("Removed server panel");
-        } 
         frame.setTitle("Login");
-        frame.add(loginPanel);
-        frame.revalidate();
-        frame.repaint();
+        mainPanel.add(loginPanel, "login");
+        cardLayout.show(mainPanel, "login");
+        
         
     }
 
@@ -149,7 +141,7 @@ class chatGUI {
     private void createSocketGUI(){
         
 
-        serverPanel= new JPanel(new GridLayout(3, 2, 5, 5));
+        JPanel serverPanel= new JPanel(new GridLayout(3, 2, 5, 5));
         serverPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
         serverPanel.add(new JLabel("IP:"));
@@ -161,39 +153,20 @@ class chatGUI {
         serverPanel.add(portField);
         
 
-        connectButton = new JButton("Connect");
-        connectButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                getSocket();
-            }
-        });
+        JButton connectButton = new JButton("Connect");
+        connectButton.addActionListener(e -> getSocket());
+           
         serverPanel.add(connectButton);
 
 
-        logOutButton = new JButton("Log Out");
-        logOutButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                createLoginGUI();
-            }
-        });
+        JButton logOutButton = new JButton("Log Out");
+        logOutButton.addActionListener(e -> createLoginGUI());
         serverPanel.add(logOutButton);
         
-
-        if (loginPanel != null) {
-           frame.remove(loginPanel);
-           System.out.println("Removed login panel");
-        } 
-
-        if (chatPanel != null) {
-            frame.remove(chatPanel);
-            System.out.println("Removed chat panel");
-        }
         frame.setTitle("Join Server");
-        frame.add(serverPanel);
-        frame.revalidate();
-        frame.repaint();
+        mainPanel.add(serverPanel, "server");
+        cardLayout.show(mainPanel, "server");
+        
        
 
     }
@@ -279,7 +252,7 @@ class chatGUI {
     }
 
     private void createChatGUI() {
-        chatPanel = new JPanel(new BorderLayout());
+        JPanel chatPanel = new JPanel(new BorderLayout());
         
         chatArea = new JTextArea();
         chatArea.setEditable(false);
@@ -291,31 +264,17 @@ class chatGUI {
         messageField = new JTextField();
         bottomPanel.add(messageField, BorderLayout.CENTER);
         
-        sendButton = new JButton("Send");
-        sendButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                sendMessage();
-            }
-        });
+        JButton sendButton = new JButton("Send");
+        sendButton.addActionListener(e -> sendMessage());
+           
 
         //Sends when you press enter
-        messageField.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                sendMessage();
-            }
-        });
+        messageField.addActionListener(e -> sendMessage());
+     
 
-        leaveButton = new JButton("Leave");
-        leaveButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                messageThread.extCloser(); 
-                
-                createSocketGUI();
-            }
-        });
+        JButton leaveButton = new JButton("Leave");
+        leaveButton.addActionListener(e -> createSocketGUI());
+          
 
         bottomPanel.add(sendButton, BorderLayout.EAST);
         
@@ -324,10 +283,10 @@ class chatGUI {
         bottomPanel.add(leaveButton, BorderLayout.WEST);
         
         frame.setTitle("Chat - " + username);
-        frame.remove(serverPanel);
-        frame.add(chatPanel);
-        frame.revalidate();
-        frame.repaint();
+        mainPanel.add(chatPanel, "chat");
+        cardLayout.show(mainPanel, "chat");
+
+        
         
         
     }
@@ -543,9 +502,6 @@ class AESUtility {
 
 
 class deffieHellman {
-    /* This class is not used
-    It was supposed to implement Deffie-Hellman key exchange to replace hardcodes keys
-    but was not completed. */
     private PrivateKey privateKey;
     private PublicKey publicKey;
     private PublicKey serverKey;
